@@ -28,12 +28,17 @@ class GPIOAXI4(params: GPIODeviceParams, beatBytes: Int)(implicit p: Parameters)
     beatBytes = beatBytes
   )
   override lazy val module = new GPIODeviceImpl
-  println(s"[IANSSEIJELLLLLLY]:GPIOAXI4")
 
   class GPIODeviceImpl extends Impl {
     val io = IO(new GPIOTopIO())
     withClockAndReset(clock, reset) {
-      val gpios = Reg(Bool())
+      val gpios = RegInit(false.B)
+      val counter = Counter(1000000)
+
+      when(counter.value === 0.U) {
+        gpios := !gpios
+      }
+      counter.inc()
 
       io.gpio := gpios
 
