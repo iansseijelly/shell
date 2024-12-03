@@ -11,21 +11,44 @@ import freechips.rocketchip.prci._
 import freechips.rocketchip.subsystem._
 
 case class GPIODeviceParams(
-  address: BigInt = 0x5000,
+  address: BigInt = 0x11000000,
   width: Int = 32,
   useAXI4: Boolean = true)
 
 case object GPIODeviceKey extends Field[Option[GPIODeviceParams]](None)
 
-class GPIOTopIO() extends Bundle {
-  val gpio = Output(Bool())
+class AXI_TOP_IO extends Bundle {
+  val s_axi_aclk = Output(Clock())
+  val s_axi_aresetn = Output(Bool())
+
+  val s_axi_awaddr = Output(UInt(9.W))
+  val s_axi_awvalid = Output(Bool())
+  val s_axi_awready = Input(Bool())
+
+  val s_axi_wdata = Output(UInt(32.W))
+  val s_axi_wstrb = Output(UInt(4.W))
+  val s_axi_wvalid = Output(Bool())
+  val s_axi_wready = Input(Bool())
+
+  val s_axi_bresp = Input(UInt(2.W))
+  val s_axi_bvalid = Input(Bool())
+  val s_axi_bready = Output(Bool())
+
+  val s_axi_araddr = Output(UInt(9.W))
+  val s_axi_arvalid = Output(Bool())
+  val s_axi_arready = Input(Bool())
+
+  val s_axi_rdata = Input(UInt(32.W))
+  val s_axi_rresp = Input(UInt(2.W))
+  val s_axi_rvalid = Input(Bool())
+  val s_axi_rready = Output(Bool())
 }
 
 class GPIOAXI4(params: GPIODeviceParams, beatBytes: Int)(implicit p: Parameters) extends ClockSinkDomain(ClockSinkParameters())(p) {
   // val device = new SimpleDevice("gpio", Seq("ucbbar,gpio"))
   val node = AXI4SlaveNode(Seq(AXI4SlavePortParameters(
     slaves = Seq(AXI4SlaveParameters(
-      address = Seq(AddressSet(params.address, 512-1)), 
+      address = Seq(AddressSet(params.address, 0x01000000-1)), 
       executable = false,
       supportsWrite = TransferSizes(1, beatBytes),
       supportsRead = TransferSizes(1, beatBytes),
@@ -37,76 +60,40 @@ class GPIOAXI4(params: GPIODeviceParams, beatBytes: Int)(implicit p: Parameters)
   override lazy val module = new GPIODeviceImpl
 
   class GPIODeviceImpl extends Impl {
-    val io = IO(new GPIOTopIO())
+    val io = IO(new AXI_TOP_IO())
 
     withClockAndReset(clock, reset) {
-      val blackbox = Module(new axi_gpio_0)
-      blackbox.io.s_axi_aclk := clock
-      blackbox.io.s_axi_aresetn := ~(reset.asBool)
+      io.s_axi_aclk := clock
+      io.s_axi_aresetn := ~(reset.asBool)
       val (axi_async, _) = node.in(0)
+      axi_async.w.ready := io.s_axi_wready
 
-      blackbox.io.s_axi_awaddr := axi_async.aw.bits.addr - params.address.U
-      blackbox.io.s_axi_awvalid := axi_async.aw.valid
-      axi_async.aw.ready := blackbox.io.s_axi_awready
+      io.s_axi_awaddr := axi_async.aw.bits.addr - params.address.U
+      io.s_axi_awvalid := axi_async.aw.valid
+      axi_async.aw.ready := io.s_axi_awready
 
-      blackbox.io.s_axi_wdata := axi_async.w.bits.data
-      blackbox.io.s_axi_wstrb := axi_async.w.bits.strb
-      blackbox.io.s_axi_wvalid := axi_async.w.valid
-      axi_async.w.ready := blackbox.io.s_axi_wready
+      io.s_axi_wdata := axi_async.w.bits.data
+      io.s_axi_wstrb := axi_async.w.bits.strb
+      io.s_axi_wvalid := axi_async.w.valid
 
-      axi_async.b.valid := blackbox.io.s_axi_bvalid
-      axi_async.b.bits.resp := blackbox.io.s_axi_bresp
-      blackbox.io.s_axi_bready := axi_async.b.ready
+      axi_async.b.valid := io.s_axi_bvalid
+      axi_async.b.bits.resp := io.s_axi_bresp
+      io.s_axi_bready := axi_async.b.ready
 
-      axi_async.ar.ready := blackbox.io.s_axi_arready
-      blackbox.io.s_axi_araddr := axi_async.ar.bits.addr - params.address.U
-      blackbox.io.s_axi_arvalid := axi_async.ar.valid
+      axi_async.ar.ready := io.s_axi_arready
+      io.s_axi_araddr := axi_async.ar.bits.addr - params.address.U
+      io.s_axi_arvalid := axi_async.ar.valid
       axi_async.ar.bits.id := 0.U
 
-      axi_async.r.valid := blackbox.io.s_axi_rvalid
-      axi_async.r.bits.data := blackbox.io.s_axi_rdata
-      axi_async.r.bits.resp := blackbox.io.s_axi_rresp
-      blackbox.io.s_axi_rready := axi_async.r.ready
+      axi_async.r.valid := io.s_axi_rvalid
+      axi_async.r.bits.data := io.s_axi_rdata
+      axi_async.r.bits.resp := io.s_axi_rresp
+      io.s_axi_rready := axi_async.r.ready
       axi_async.r.bits.last := true.B
-
-      io.gpio := blackbox.io.gpio_io_o(0)
-      blackbox.io.gpio_io_i := 0.U
     }
   }
 }
 
-class axi_gpio_0 extends BlackBox() {
-  val io = IO(new Bundle {
-    val s_axi_aclk = Input(Clock())
-    val s_axi_aresetn = Input(Reset())
-
-    val s_axi_awaddr = Input(UInt(9.W))
-    val s_axi_awvalid = Input(Bool())
-    val s_axi_awready = Output(Bool())
-
-    val s_axi_wdata = Input(UInt(32.W))
-    val s_axi_wstrb = Input(UInt(4.W))
-    val s_axi_wvalid = Input(Bool())
-    val s_axi_wready = Output(Bool())
-
-    val s_axi_bresp = Output(UInt(2.W))
-    val s_axi_bvalid = Output(Bool())
-    val s_axi_bready = Input(Bool())
-
-    val s_axi_araddr = Input(UInt(9.W))
-    val s_axi_arvalid = Input(Bool())
-    val s_axi_arready = Output(Bool())
-
-    val s_axi_rdata = Output(UInt(32.W))
-    val s_axi_rresp = Output(UInt(2.W))
-    val s_axi_rvalid = Output(Bool())
-    val s_axi_rready = Input(Bool())
-
-    val gpio_io_i = Input(UInt(32.W))
-    val gpio_io_o = Output(UInt(32.W))
-    val gpio_io_t = Output(UInt(32.W))
-  })
-}
 
 trait CanHavePeripheryGPIO { this: BaseSubsystem =>
   private val portName = "gpio"
@@ -127,9 +114,9 @@ trait CanHavePeripheryGPIO { this: BaseSubsystem =>
       TLBuffer() := _
       }
       val gpio_top = InModuleBody {
-        val gpio_io = IO(Bool()).suggestName("gpio_top_io_pin")
-        gpio_io := gpio.module.io.gpio
-        gpio_io
+        val gpio_axi_top_io = IO(new AXI_TOP_IO()).suggestName("gpio_axi_top_io")
+        gpio_axi_top_io <> gpio.module.io
+        gpio_axi_top_io
       }
       Some(gpio_top)
     }
@@ -139,6 +126,6 @@ trait CanHavePeripheryGPIO { this: BaseSubsystem =>
   
 }
 
-class WithPeripheryGPIO extends Config((site, here, up) => {
-  case GPIODeviceKey => Some(GPIODeviceParams())
+class WithPeripheryGPIO(address: BigInt = 0x20000000) extends Config((site, here, up) => {
+  case GPIODeviceKey => Some(GPIODeviceParams(address = address))
 })
