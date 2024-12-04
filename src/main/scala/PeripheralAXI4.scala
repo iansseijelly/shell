@@ -10,14 +10,14 @@ import freechips.rocketchip.amba.axi4._
 import freechips.rocketchip.prci._
 import freechips.rocketchip.subsystem._
 
-case class GPIODeviceParams(
+case class PeripheralDeviceParams(
   address: BigInt = 0x11000000,
   width: Int = 32,
   useAXI4: Boolean = true)
 
-case object GPIODeviceKey extends Field[Option[GPIODeviceParams]](None)
+case object PeripheralDeviceKey extends Field[Option[PeripheralDeviceParams]](None)
 
-class AXI_TOP_IO extends Bundle {
+class AXI4 extends Bundle {
   val s_axi_aclk = Output(Clock())
   val s_axi_aresetn = Output(Bool())
 
@@ -44,8 +44,7 @@ class AXI_TOP_IO extends Bundle {
   val s_axi_rready = Output(Bool())
 }
 
-class GPIOAXI4(params: GPIODeviceParams, beatBytes: Int)(implicit p: Parameters) extends ClockSinkDomain(ClockSinkParameters())(p) {
-  // val device = new SimpleDevice("gpio", Seq("ucbbar,gpio"))
+class PeripheralAXI4(params: PeripheralDeviceParams, beatBytes: Int)(implicit p: Parameters) extends ClockSinkDomain(ClockSinkParameters())(p) {
   val node = AXI4SlaveNode(Seq(AXI4SlavePortParameters(
     slaves = Seq(AXI4SlaveParameters(
       address = Seq(AddressSet(params.address, 0x01000000-1)), 
@@ -57,10 +56,10 @@ class GPIOAXI4(params: GPIODeviceParams, beatBytes: Int)(implicit p: Parameters)
     beatBytes = beatBytes,
     minLatency = 1
   )))
-  override lazy val module = new GPIODeviceImpl
+  override lazy val module = new PeripheralDeviceImpl
 
-  class GPIODeviceImpl extends Impl {
-    val io = IO(new AXI_TOP_IO())
+  class PeripheralDeviceImpl extends Impl {
+    val io = IO(new AXI4())
 
     withClockAndReset(clock, reset) {
       io.s_axi_aclk := clock
@@ -95,16 +94,16 @@ class GPIOAXI4(params: GPIODeviceParams, beatBytes: Int)(implicit p: Parameters)
 }
 
 
-trait CanHavePeripheryGPIO { this: BaseSubsystem =>
-  private val portName = "gpio"
+trait CanHavePeripheralAXI4 { this: BaseSubsystem =>
+  private val portName = "periph_axi4"
   private val pbus = locateTLBusWrapper(PBUS)
 
-  val gpio_top = p(GPIODeviceKey) match {
+  val peripheral_top = p(PeripheralDeviceKey) match {
     case Some(params) => {
-      val gpio = LazyModule(new GPIOAXI4(params, 4)(p))
-      gpio.clockNode := pbus.fixedClockNode
+      val peripheral = LazyModule(new PeripheralAXI4(params, 4)(p))
+      peripheral.clockNode := pbus.fixedClockNode
       pbus.coupleTo(portName) {
-      gpio.node :=
+      peripheral.node :=
       AXI4Buffer() :=
       AXI4UserYanker() :=
       // AXI4Deinterleaver() :=
@@ -113,12 +112,12 @@ trait CanHavePeripheryGPIO { this: BaseSubsystem =>
       TLWidthWidget(pbus.beatBytes) :=
       TLBuffer() := _
       }
-      val gpio_top = InModuleBody {
-        val gpio_axi_top_io = IO(new AXI_TOP_IO()).suggestName("gpio_axi_top_io")
-        gpio_axi_top_io <> gpio.module.io
-        gpio_axi_top_io
+      val peripheral_top = InModuleBody {
+        val peripheral_axi4 = IO(new AXI4()).suggestName("periph_axi4")
+        peripheral_axi4 <> peripheral.module.io
+        peripheral_axi4
       }
-      Some(gpio_top)
+      Some(peripheral_top)
     }
     case None => None
   }
@@ -126,6 +125,6 @@ trait CanHavePeripheryGPIO { this: BaseSubsystem =>
   
 }
 
-class WithPeripheryGPIO(address: BigInt = 0x11000000) extends Config((site, here, up) => {
-  case GPIODeviceKey => Some(GPIODeviceParams(address = address))
+class WithPeripheralAXI4(address: BigInt = 0x11000000) extends Config((site, here, up) => {
+  case PeripheralDeviceKey => Some(PeripheralDeviceParams(address = address))
 })
